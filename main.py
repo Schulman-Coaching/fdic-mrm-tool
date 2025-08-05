@@ -1,0 +1,389 @@
+"""
+Main CLI interface for FDIC MRM Data Collection Tool
+"""
+import asyncio
+import click
+import logging
+from datetime import datetime
+from pathlib import Path
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.panel import Panel
+from rich.text import Text
+
+from config import settings
+from database import db_manager
+from data_parser import data_parser
+from fdic_collector import collect_fdic_data
+from export_handler import export_handler
+
+# Setup logging
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(settings.LOGS_DIR / "fdic_mrm_tool.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
+console = Console()
+
+@click.group()
+@click.version_option(version="1.0.0")
+def cli():
+    """FDIC MRM Data Collection and Management Tool"""
+    console.print(Panel.fit(
+        "[bold blue]FDIC MRM Data Collection Tool[/bold blue]\n"
+        "Automated collection and management of Model Risk Management data for FDIC banks",
+        border_style="blue"
+    ))
+
+@cli.command()
+def init():
+    """Initialize the database and import existing data"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            # Initialize database
+            task1 = progress.add_task("Initializing database...", total=None)
+            db_manager.create_tables()
+            progress.update(task1, description="✓ Database initialized")
+            
+            # Import existing data
+            task2 = progress.add_task("Importing existing 22-bank dataset...", total=None)
+            imported_count = data_parser.import_existing_data()
+            progress.update(task2, description=f"✓ Imported {imported_count} banks from existing dataset")
+        
+        console.print(f"[green]✓ Initialization complete! Imported {imported_count} banks.[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Initialization failed: {e}[/red]")
+        logger.error(f"Initialization failed: {e}")
+
+@cli.command()
+@click.option('--limit', default=100, help='Number of banks to collect (default: 100)')
+def collect():
+    """Collect top FDIC banks and populate database"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            task = progress.add_task("Collecting FDIC bank data...", total=None)
+            
+            # Run async collection
+            added_count = asyncio.run(collect_fdic_data())
+            
+            progress.update(task, description=f"✓ Added {added_count} new banks to database")
+        
+        console.print(f"[green]✓ Collection complete! Added {added_count} new banks.[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Collection failed: {e}[/red]")
+        logger.error(f"Collection failed: {e}")
+
+@cli.command()
+@click.option('--format', 'export_format', default='xlsx', type=click.Choice(['csv', 'xlsx']), help='Export format')
+@click.option('--filename', help='Custom filename for export')
+@click.option('--filter-incomplete', is_flag=True, help='Only export banks with incomplete data')
+def export(export_format, filename, filter_incomplete):
+    """Export bank data to CSV or Excel"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            task = progress.add_task("Preparing export data...", total=None)
+            
+            # Get banks to export
+            if filter_incomplete:
+                banks = db_manager.get_banks_needing_research()
+                progress.update(task, description=f"Found {len(banks)} banks needing research")
+            else:
+                banks = db_manager.get_all_banks()
+                progress.update(task, description=f"Found {len(banks)} total banks")
+            
+            # Export data
+            if export_format == 'csv':
+                filepath = export_handler.export_to_csv(banks, filename)
+            else:
+                filepath = export_handler.export_to_excel(banks, filename)
+            
+            progress.update(task, description=f"✓ Exported to {filepath}")
+        
+        console.print(f"[green]✓ Export complete! File saved to: {filepath}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Export failed: {e}[/red]")
+        logger.error(f"Export failed: {e}")
+
+@cli.command()
+def template():
+    """Generate research template for manual data collection"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            task = progress.add_task("Generating research template...", total=None)
+            filepath = export_handler.export_research_template()
+            progress.update(task, description=f"✓ Template generated: {filepath}")
+        
+        console.print(f"[green]✓ Research template generated: {filepath}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Template generation failed: {e}[/red]")
+        logger.error(f"Template generation failed: {e}")
+
+@cli.command()
+@click.option('--name', help='Search by bank name')
+@click.option('--rank-min', type=int, help='Minimum asset rank')
+@click.option('--rank-max', type=int, help='Maximum asset rank')
+@click.option('--state', help='Filter by state')
+@click.option('--size', type=click.Choice(['mega', 'large', 'regional', 'community', 'small']), help='Filter by size category')
+@click.option('--incomplete', is_flag=True, help='Show only banks with incomplete data')
+@click.option('--limit', default=20, help='Maximum number of results to show')
+def search(name, rank_min, rank_max, state, size, incomplete, limit):
+    """Search and display bank information"""
+    try:
+        # Build search parameters
+        min_completeness = None
+        if incomplete:
+            min_completeness = 0.0
+            has_mrm_data = False
+        else:
+            has_mrm_data = None
+        
+        # Perform search
+        banks = db_manager.search_banks(
+            name_pattern=name,
+            asset_rank_min=rank_min,
+            asset_rank_max=rank_max,
+            size_category=size,
+            state=state,
+            min_completeness=min_completeness,
+            has_mrm_data=has_mrm_data
+        )
+        
+        # Limit results
+        banks = banks[:limit]
+        
+        if not banks:
+            console.print("[yellow]No banks found matching the criteria.[/yellow]")
+            return
+        
+        # Display results in table
+        table = Table(title=f"Search Results ({len(banks)} banks)")
+        table.add_column("Rank", style="cyan", no_wrap=True)
+        table.add_column("Bank Name", style="magenta")
+        table.add_column("State", style="green")
+        table.add_column("Size", style="blue")
+        table.add_column("MRM Data", style="yellow")
+        table.add_column("Completeness", style="red")
+        
+        for bank in banks:
+            has_mrm = "✓" if bank.mrm_departments or bank.leadership else "✗"
+            completeness = f"{bank.completeness_score:.1%}"
+            
+            table.add_row(
+                str(bank.asset_rank or "N/A"),
+                bank.bank_name,
+                bank.headquarters_state or "N/A",
+                bank.size_category.value if bank.size_category else "N/A",
+                has_mrm,
+                completeness
+            )
+        
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[red]✗ Search failed: {e}[/red]")
+        logger.error(f"Search failed: {e}")
+
+@cli.command()
+def stats():
+    """Display database statistics"""
+    try:
+        stats = db_manager.get_database_stats()
+        banks = db_manager.get_all_banks()
+        
+        # Create statistics table
+        table = Table(title="Database Statistics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="magenta")
+        
+        table.add_row("Total Banks", str(stats['total_banks']))
+        table.add_row("Banks with MRM Data", str(stats['banks_with_mrm_data']))
+        table.add_row("MRM Coverage", f"{stats['mrm_coverage_percentage']:.1f}%")
+        table.add_row("Average Completeness", f"{stats['average_completeness_score']:.1%}")
+        table.add_row("Pending Research Tasks", str(stats['pending_research_tasks']))
+        table.add_row("Recent Collections", str(stats['recent_collection_activities']))
+        
+        console.print(table)
+        
+        # Size distribution
+        size_dist = {}
+        quality_dist = {}
+        
+        for bank in banks:
+            # Size distribution
+            size = bank.size_category.value if bank.size_category else 'unknown'
+            size_dist[size] = size_dist.get(size, 0) + 1
+            
+            # Quality distribution
+            quality = bank.quality_status.value
+            quality_dist[quality] = quality_dist.get(quality, 0) + 1
+        
+        # Size distribution table
+        size_table = Table(title="Size Distribution")
+        size_table.add_column("Category", style="cyan")
+        size_table.add_column("Count", style="magenta")
+        size_table.add_column("Percentage", style="green")
+        
+        total = sum(size_dist.values())
+        for category, count in sorted(size_dist.items()):
+            percentage = f"{count/total*100:.1f}%" if total > 0 else "0%"
+            size_table.add_row(category.title(), str(count), percentage)
+        
+        console.print(size_table)
+        
+        # Quality distribution table
+        quality_table = Table(title="Data Quality Distribution")
+        quality_table.add_column("Status", style="cyan")
+        quality_table.add_column("Count", style="magenta")
+        quality_table.add_column("Percentage", style="green")
+        
+        for status, count in sorted(quality_dist.items()):
+            percentage = f"{count/total*100:.1f}%" if total > 0 else "0%"
+            quality_table.add_row(status.title(), str(count), percentage)
+        
+        console.print(quality_table)
+        
+    except Exception as e:
+        console.print(f"[red]✗ Stats retrieval failed: {e}[/red]")
+        logger.error(f"Stats retrieval failed: {e}")
+
+@cli.command()
+@click.argument('bank_name')
+def detail(bank_name):
+    """Show detailed information for a specific bank"""
+    try:
+        bank = db_manager.get_bank_by_name(bank_name)
+        
+        if not bank:
+            console.print(f"[red]Bank '{bank_name}' not found.[/red]")
+            return
+        
+        # Basic information panel
+        basic_info = f"""
+[bold]Bank Name:[/bold] {bank.bank_name}
+[bold]Asset Rank:[/bold] {bank.asset_rank or 'N/A'}
+[bold]Total Assets:[/bold] ${bank.total_assets:,.0f}M ({bank.size_category.value if bank.size_category else 'N/A'})
+[bold]Headquarters:[/bold] {bank.headquarters_city}, {bank.headquarters_state}
+[bold]FDIC CERT ID:[/bold] {bank.fdic_cert_id or 'N/A'}
+[bold]RSSD ID:[/bold] {bank.rssd_id or 'N/A'}
+        """.strip()
+        
+        console.print(Panel(basic_info, title="Basic Information", border_style="blue"))
+        
+        # MRM Departments
+        if bank.mrm_departments:
+            dept_info = ""
+            for dept in bank.mrm_departments:
+                dept_info += f"[bold]{dept.department_name}[/bold]\n"
+                if dept.key_functions:
+                    dept_info += f"  Functions: {', '.join(dept.key_functions)}\n"
+                if dept.parent_organization:
+                    dept_info += f"  Parent: {dept.parent_organization}\n"
+                dept_info += "\n"
+            
+            console.print(Panel(dept_info.strip(), title="MRM Departments", border_style="green"))
+        
+        # Leadership
+        if bank.leadership:
+            leadership_table = Table(title="Leadership Information")
+            leadership_table.add_column("Name", style="cyan")
+            leadership_table.add_column("Title", style="magenta")
+            leadership_table.add_column("Department", style="green")
+            leadership_table.add_column("Confidence", style="yellow")
+            
+            for leader in bank.leadership:
+                leadership_table.add_row(
+                    leader.name or "Unknown",
+                    leader.title or "Unknown",
+                    leader.department or "N/A",
+                    f"{leader.confidence_score:.1%}"
+                )
+            
+            console.print(leadership_table)
+        
+        # Data Quality
+        quality_info = f"""
+[bold]Completeness Score:[/bold] {bank.completeness_score:.1%}
+[bold]Confidence Score:[/bold] {bank.confidence_score:.1%}
+[bold]Quality Status:[/bold] {bank.quality_status.value}
+[bold]Primary Source:[/bold] {bank.primary_source.value}
+[bold]Last Updated:[/bold] {bank.last_updated.strftime('%Y-%m-%d %H:%M:%S') if bank.last_updated else 'N/A'}
+[bold]Last Verified:[/bold] {bank.last_verified.strftime('%Y-%m-%d %H:%M:%S') if bank.last_verified else 'N/A'}
+        """.strip()
+        
+        console.print(Panel(quality_info, title="Data Quality", border_style="yellow"))
+        
+        # Notes
+        if bank.notes:
+            console.print(Panel(bank.notes, title="Notes", border_style="red"))
+        
+    except Exception as e:
+        console.print(f"[red]✗ Detail retrieval failed: {e}[/red]")
+        logger.error(f"Detail retrieval failed: {e}")
+
+@cli.command()
+def tasks():
+    """Show pending research tasks"""
+    try:
+        tasks = db_manager.get_pending_research_tasks(50)
+        
+        if not tasks:
+            console.print("[yellow]No pending research tasks.[/yellow]")
+            return
+        
+        table = Table(title=f"Pending Research Tasks ({len(tasks)})")
+        table.add_column("Bank", style="cyan")
+        table.add_column("Task Type", style="magenta")
+        table.add_column("Priority", style="red")
+        table.add_column("Created", style="green")
+        table.add_column("Description", style="blue")
+        
+        for task in tasks:
+            bank = db_manager.get_bank(task.bank_id)
+            bank_name = bank.bank_name if bank else f"Bank ID {task.bank_id}"
+            
+            table.add_row(
+                bank_name,
+                task.task_type,
+                str(task.priority),
+                task.created_at.strftime('%Y-%m-%d') if task.created_at else 'N/A',
+                task.description[:50] + "..." if len(task.description or "") > 50 else task.description or ""
+            )
+        
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[red]✗ Tasks retrieval failed: {e}[/red]")
+        logger.error(f"Tasks retrieval failed: {e}")
+
+if __name__ == '__main__':
+    cli()
