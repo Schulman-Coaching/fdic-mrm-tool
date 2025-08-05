@@ -4,7 +4,8 @@ Configuration settings for FDIC MRM Data Collection Tool
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 # Load environment variables

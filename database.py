@@ -3,7 +3,7 @@ Database management and operations for FDIC MRM Tool
 """
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, and_, or_, desc, asc
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -196,7 +196,7 @@ class DatabaseManager:
     def get_banks_needing_research(self, limit: int = 50) -> List[BankInfo]:
         """Get banks that need research (low completeness or old data)"""
         with self.get_session() as session:
-            cutoff_date = datetime.utcnow().replace(day=datetime.utcnow().day - 30)  # 30 days ago
+            cutoff_date = datetime.utcnow() - timedelta(days=30)  # 30 days ago
             
             query = session.query(BankRecord).filter(
                 or_(
@@ -293,7 +293,7 @@ class DatabaseManager:
             ).count()
             
             recent_collections = session.query(DataCollectionLog).filter(
-                DataCollectionLog.timestamp >= datetime.utcnow().replace(day=datetime.utcnow().day - 7)
+                DataCollectionLog.timestamp >= datetime.utcnow() - timedelta(days=7)
             ).count()
             
             return {

@@ -97,7 +97,7 @@ def collect():
 @click.option('--min-assets', default=25, help='Minimum assets in millions (default: 25)')
 @click.option('--max-assets', default=50000, help='Maximum assets in millions (default: 50,000 = $50B)')
 @click.option('--limit', default=100, help='Number of banks to collect (default: 100)')
-def collect_range():
+def collect_range(min_assets, max_assets, limit):
     """Collect FDIC banks within specific asset range"""
     try:
         with Progress(
