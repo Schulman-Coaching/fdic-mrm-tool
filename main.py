@@ -18,6 +18,7 @@ from data_parser import data_parser
 from fdic_collector import collect_fdic_data
 from export_handler import export_handler
 from linkedin_collector import LinkedInCollector
+from mrm_extractor import extract_mrm_data_for_banks
 
 # Setup logging
 logging.basicConfig(
@@ -91,6 +92,40 @@ def collect():
     except Exception as e:
         console.print(f"[red]✗ Collection failed: {e}[/red]")
         logger.error(f"Collection failed: {e}")
+
+@cli.command()
+@click.option('--min-assets', default=25, help='Minimum assets in millions (default: 25)')
+@click.option('--max-assets', default=50000, help='Maximum assets in millions (default: 50,000 = $50B)')
+@click.option('--limit', default=100, help='Number of banks to collect (default: 100)')
+def collect_range():
+    """Collect FDIC banks within specific asset range"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            # Convert max assets from millions to billions for the function
+            max_assets_billions = max_assets / 1000
+            
+            task = progress.add_task(f"Collecting banks with ${min_assets}M-${max_assets_billions:.0f}B assets...", total=None)
+            
+            # Run async collection
+            async def collect_asset_range_data():
+                from fdic_collector import FDICCollector
+                async with FDICCollector() as collector:
+                    return await collector.populate_asset_range_banks(min_assets, max_assets_billions, limit)
+            
+            added_count = asyncio.run(collect_asset_range_data())
+            
+            progress.update(task, description=f"✓ Added {added_count} banks in asset range")
+        
+        console.print(f"[green]✓ Asset range collection complete! Added {added_count} banks with ${min_assets}M-${max_assets_billions:.0f}B assets.[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Asset range collection failed: {e}[/red]")
+        logger.error(f"Asset range collection failed: {e}")
 
 @cli.command()
 @click.option('--format', 'export_format', default='xlsx', type=click.Choice(['csv', 'xlsx']), help='Export format')
@@ -385,6 +420,78 @@ def tasks():
     except Exception as e:
         console.print(f"[red]✗ Tasks retrieval failed: {e}[/red]")
         logger.error(f"Tasks retrieval failed: {e}")
+
+@cli.command()
+@click.option('--batch-size', default=5, help='Number of banks to process simultaneously')
+@click.option('--asset-min', type=float, help='Minimum asset size in millions')
+@click.option('--asset-max', type=float, help='Maximum asset size in millions')
+@click.option('--incomplete-only', is_flag=True, help='Only extract data for banks with low completeness scores')
+def extract_mrm(batch_size, asset_min, asset_max, incomplete_only):
+    """Extract comprehensive MRM data from multiple sources for all banks"""
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            task = progress.add_task("Preparing MRM data extraction...", total=None)
+            
+            # Get banks to process
+            if asset_min or asset_max:
+                # Filter by asset range
+                banks = db_manager.search_banks(
+                    asset_rank_min=None,
+                    asset_rank_max=None,
+                    min_completeness=0.0 if incomplete_only else None
+                )
+                # Additional filtering by asset size
+                if asset_min or asset_max:
+                    filtered_banks = []
+                    for bank in banks:
+                        if bank.total_assets:
+                            if asset_min and bank.total_assets < asset_min:
+                                continue
+                            if asset_max and bank.total_assets > asset_max:
+                                continue
+                        filtered_banks.append(bank)
+                    banks = filtered_banks
+            elif incomplete_only:
+                banks = db_manager.get_banks_needing_research(limit=1000)
+            else:
+                banks = db_manager.get_all_banks()
+            
+            if not banks:
+                progress.update(task, description="✗ No banks found matching criteria")
+                console.print("[yellow]No banks found matching the specified criteria.[/yellow]")
+                return
+            
+            progress.update(task, description=f"Starting MRM extraction for {len(banks)} banks...")
+            
+            # Run comprehensive extraction
+            stats = asyncio.run(extract_mrm_data_for_banks(banks))
+            
+            progress.update(task, description=f"✓ MRM extraction completed")
+            
+            # Display results
+            results_table = Table(title="MRM Data Extraction Results")
+            results_table.add_column("Metric", style="cyan")
+            results_table.add_column("Count", style="magenta")
+            
+            results_table.add_row("Banks Processed", str(stats.get('banks_processed', 0)))
+            results_table.add_row("Banks Updated in DB", str(stats.get('banks_updated', 0)))
+            results_table.add_row("LinkedIn Profiles Found", str(stats.get('linkedin_profiles_found', 0)))
+            results_table.add_row("Sources Used", ', '.join(stats.get('sources_used', set())))
+            results_table.add_row("Errors Encountered", str(stats.get('errors_encountered', 0)))
+            results_table.add_row("Update Errors", str(stats.get('update_errors', 0)))
+            
+            console.print(results_table)
+        
+        console.print(f"[green]✓ MRM extraction complete! Processed {stats.get('banks_processed', 0)} banks.[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ MRM extraction failed: {e}[/red]")
+        logger.error(f"MRM extraction failed: {e}")
 
 @cli.command()
 @click.argument('bank_name')

@@ -64,6 +64,39 @@ class FDICCollector:
             logger.error(f"Error fetching banks from FDIC API: {e}")
             return []
     
+    async def get_banks_by_asset_range(self, min_assets_millions: float = 25, max_assets_billions: float = 50, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get banks within a specific asset range from FDIC API"""
+        try:
+            # Convert to thousands (FDIC API uses thousands)
+            min_assets_thousands = min_assets_millions * 1000  # $25M = 25,000 thousands
+            max_assets_thousands = max_assets_billions * 1000 * 1000  # $50B = 50,000,000 thousands
+            
+            # FDIC API endpoint for institutions
+            url = f"{self.base_url}/institutions"
+            
+            params = {
+                'filters': f'ACTIVE:1 AND ASSET:[{int(min_assets_thousands)} TO {int(max_assets_thousands)}]',
+                'fields': 'NAME,CERT,RSSDID,ASSET,CITY,STALP,DATEUPDT,REPDTE,CHARTER,REGAGENT,WEBADDR',
+                'sort_by': 'ASSET',
+                'sort_order': 'DESC',
+                'limit': limit,
+                'format': 'json'
+            }
+            
+            async with self.session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    banks = data.get('data', [])
+                    logger.info(f"Retrieved {len(banks)} banks in asset range ${min_assets_millions}M-${max_assets_billions}B")
+                    return banks
+                else:
+                    logger.error(f"FDIC API request failed with status {response.status}")
+                    return []
+        
+        except Exception as e:
+            logger.error(f"Error fetching banks by asset range: {e}")
+            return []
+    
     async def get_bank_details(self, cert_id: int) -> Optional[Dict[str, Any]]:
         """Get detailed information for a specific bank by CERT ID"""
         try:
@@ -260,7 +293,7 @@ class FDICCollector:
             added_count = 0
             for bank_info in fdic_banks:
                 # Skip if bank already exists
-                if (bank_info.fdic_cert_id in existing_certs or 
+                if (bank_info.fdic_cert_id in existing_certs or
                     bank_info.bank_name.lower() in existing_names):
                     logger.info(f"Bank {bank_info.bank_name} already exists, skipping")
                     continue
@@ -287,6 +320,107 @@ class FDICCollector:
         
         except Exception as e:
             logger.error(f"Error populating placeholder banks: {e}")
+            return 0
+    
+    async def collect_asset_range_banks(self, min_assets_millions: float = 25, max_assets_billions: float = 50, limit: int = 100) -> List[BankInfo]:
+        """Collect banks within specific asset range and convert to BankInfo objects"""
+        start_time = time.time()
+        banks_collected = []
+        errors = 0
+        
+        try:
+            fdic_banks = await self.get_banks_by_asset_range(min_assets_millions, max_assets_billions, limit)
+            
+            for rank, fdic_bank in enumerate(fdic_banks, 1):
+                try:
+                    bank_info = self._convert_fdic_to_bank_info(fdic_bank, rank)
+                    banks_collected.append(bank_info)
+                    
+                    # Add delay to be respectful to FDIC API
+                    await asyncio.sleep(settings.SCRAPING_DELAY)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing bank rank {rank}: {e}")
+                    errors += 1
+                    continue
+            
+            execution_time = time.time() - start_time
+            
+            # Log collection activity
+            db_manager.log_collection_activity(
+                source=DataSource.FDIC_API,
+                collection_type=f"asset_range_{min_assets_millions}M_{max_assets_billions}B",
+                status="success" if errors == 0 else "partial",
+                records_collected=len(banks_collected),
+                errors_encountered=errors,
+                execution_time=execution_time,
+                details={
+                    "total_requested": limit,
+                    "successfully_processed": len(banks_collected),
+                    "asset_range": f"${min_assets_millions}M - ${max_assets_billions}B",
+                    "api_endpoint": f"{self.base_url}/institutions"
+                }
+            )
+            
+            logger.info(f"Collected {len(banks_collected)} banks in asset range ${min_assets_millions}M-${max_assets_billions}B in {execution_time:.2f} seconds")
+            return banks_collected
+        
+        except Exception as e:
+            execution_time = time.time() - start_time
+            db_manager.log_collection_activity(
+                source=DataSource.FDIC_API,
+                collection_type=f"asset_range_{min_assets_millions}M_{max_assets_billions}B",
+                status="failed",
+                records_collected=len(banks_collected),
+                errors_encountered=errors + 1,
+                execution_time=execution_time,
+                error_messages=str(e)
+            )
+            logger.error(f"Failed to collect asset range banks: {e}")
+            return banks_collected
+    
+    async def populate_asset_range_banks(self, min_assets_millions: float = 25, max_assets_billions: float = 50, limit: int = 100) -> int:
+        """Populate database with banks in specific asset range"""
+        try:
+            # Get existing banks to avoid duplicates
+            existing_banks = db_manager.get_all_banks()
+            existing_certs = {bank.fdic_cert_id for bank in existing_banks if bank.fdic_cert_id}
+            existing_names = {bank.bank_name.lower() for bank in existing_banks}
+            
+            # Collect banks in asset range
+            fdic_banks = await self.collect_asset_range_banks(min_assets_millions, max_assets_billions, limit)
+            
+            added_count = 0
+            for bank_info in fdic_banks:
+                # Skip if bank already exists
+                if (bank_info.fdic_cert_id in existing_certs or
+                    bank_info.bank_name.lower() in existing_names):
+                    logger.info(f"Bank {bank_info.bank_name} already exists, skipping")
+                    continue
+                
+                try:
+                    bank_id = db_manager.add_bank(bank_info)
+                    added_count += 1
+                    logger.info(f"Added asset-range bank: {bank_info.bank_name} (ID: {bank_id}, Assets: ${bank_info.total_assets:,.0f}M)")
+                    
+                    # Create research task for MRM data collection with higher priority for larger banks
+                    priority = 9 if bank_info.total_assets > 10000 else 7  # >$10B gets priority 9, others get 7
+                    db_manager.add_research_task(
+                        bank_id=bank_id,
+                        task_type="mrm_research",
+                        description=f"Research MRM department and leadership information for {bank_info.bank_name} (${bank_info.total_assets:,.0f}M assets)",
+                        priority=priority
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error adding bank {bank_info.bank_name}: {e}")
+                    continue
+            
+            logger.info(f"Added {added_count} new banks in asset range ${min_assets_millions}M-${max_assets_billions}B")
+            return added_count
+        
+        except Exception as e:
+            logger.error(f"Error populating asset range banks: {e}")
             return 0
 
 # Async function for easy usage

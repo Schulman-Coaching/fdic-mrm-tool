@@ -47,17 +47,27 @@ python main.py collect
 python main.py export --format xlsx
 ```
 
-4. **Search for specific banks:**
+4. **Collect banks in specific asset range ($25M-$50B):**
+```bash
+python main.py collect-range --min-assets 25 --max-assets 50000
+```
+
+5. **Extract comprehensive MRM data from all sources:**
+```bash
+python main.py extract-mrm --incomplete-only
+```
+
+6. **Search for specific banks:**
 ```bash
 python main.py search --name "JPMorgan" --limit 5
 ```
 
-5. **Collect LinkedIn data for a specific bank:**
+7. **Collect LinkedIn data for a specific bank:**
 ```bash
 python main.py linkedin "JPMorgan Chase & Co."
 ```
 
-6. **View database statistics:**
+8. **View database statistics:**
 ```bash
 python main.py stats
 ```
@@ -68,6 +78,8 @@ python main.py stats
 
 - `init` - Initialize database and import existing 22-bank dataset
 - `collect` - Collect top FDIC banks and populate database
+- `collect-range` - Collect banks within specific asset range ($25M-$50B)
+- `extract-mrm` - Extract comprehensive MRM data from multiple sources
 - `export` - Export bank data to CSV or Excel formats
 - `search` - Search and filter bank information
 - `stats` - Display database statistics and distributions
@@ -104,9 +116,16 @@ python main.py search --state "NY" --size large
 # Show only incomplete data
 python main.py search --incomplete --limit 50
 
+# Collect banks in asset range and extract MRM data
+python main.py collect-range --min-assets 25 --max-assets 50000
+python main.py extract-mrm --asset-min 25 --asset-max 50000
+
 # Collect LinkedIn data for specific banks
 python main.py linkedin "Bank of America"
 python main.py linkedin "Wells Fargo & Co." --limit 15
+
+# Extract MRM data for incomplete banks only
+python main.py extract-mrm --incomplete-only --batch-size 3
 ```
 
 ## Data Structure
