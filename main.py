@@ -17,6 +17,7 @@ from database import db_manager
 from data_parser import data_parser
 from fdic_collector import collect_fdic_data
 from export_handler import export_handler
+from linkedin_collector import LinkedInCollector
 
 # Setup logging
 logging.basicConfig(
@@ -384,6 +385,96 @@ def tasks():
     except Exception as e:
         console.print(f"[red]✗ Tasks retrieval failed: {e}[/red]")
         logger.error(f"Tasks retrieval failed: {e}")
+
+@cli.command()
+@click.argument('bank_name')
+@click.option('--username', help='LinkedIn username (or set LINKEDIN_USERNAME env var)')
+@click.option('--password', help='LinkedIn password (or set LINKEDIN_PASSWORD env var)')
+@click.option('--limit', default=10, help='Maximum number of profiles to collect')
+def linkedin(bank_name, username, password, limit):
+    """Collect MRM leadership data from LinkedIn for a specific bank"""
+    try:
+        if not username and not settings.LINKEDIN_USERNAME:
+            console.print("[red]LinkedIn username required. Use --username option or set LINKEDIN_USERNAME environment variable.[/red]")
+            return
+        
+        if not password and not settings.LINKEDIN_PASSWORD:
+            console.print("[red]LinkedIn password required. Use --password option or set LINKEDIN_PASSWORD environment variable.[/red]")
+            return
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            
+            task = progress.add_task(f"Collecting LinkedIn data for {bank_name}...", total=None)
+            
+            # Initialize LinkedIn collector
+            collector = LinkedInCollector(username, password)
+            
+            try:
+                # Collect leadership information
+                leadership_info = collector.collect_bank_leadership(bank_name)
+                
+                if not leadership_info:
+                    progress.update(task, description=f"✗ No MRM professionals found for {bank_name}")
+                    console.print(f"[yellow]No MRM professionals found on LinkedIn for {bank_name}[/yellow]")
+                    return
+                
+                # Find the bank in database
+                bank = db_manager.get_bank_by_name(bank_name)
+                if not bank:
+                    progress.update(task, description=f"✗ Bank {bank_name} not found in database")
+                    console.print(f"[red]Bank '{bank_name}' not found in database. Please add it first.[/red]")
+                    return
+                
+                # Add leadership information to existing bank data
+                existing_leadership = bank.leadership or []
+                existing_urls = {leader.linkedin_url for leader in existing_leadership if leader.linkedin_url}
+                
+                new_leaders = []
+                for leader in leadership_info:
+                    if leader.linkedin_url not in existing_urls:
+                        new_leaders.append(leader)
+                
+                if new_leaders:
+                    # Update bank with new leadership data
+                    bank.leadership.extend(new_leaders)
+                    bank.last_updated = datetime.utcnow()
+                    
+                    # Recalculate completeness score
+                    bank.completeness_score = bank.completeness_score  # Triggers recalculation
+                    
+                    # Update in database
+                    db_manager.update_bank(bank.id if hasattr(bank, 'id') else None, bank)
+                    
+                    progress.update(task, description=f"✓ Added {len(new_leaders)} new LinkedIn profiles for {bank_name}")
+                    
+                    # Display results
+                    table = Table(title=f"New LinkedIn Profiles for {bank_name}")
+                    table.add_column("Name", style="cyan")
+                    table.add_column("Title", style="magenta")
+                    table.add_column("LinkedIn URL", style="blue")
+                    
+                    for leader in new_leaders:
+                        table.add_row(
+                            leader.name or "Unknown",
+                            leader.title or "Unknown",
+                            leader.linkedin_url or "N/A"
+                        )
+                    
+                    console.print(table)
+                else:
+                    progress.update(task, description=f"✓ No new profiles found (all already exist)")
+                    console.print(f"[yellow]All found LinkedIn profiles for {bank_name} already exist in database[/yellow]")
+                
+            finally:
+                collector.close()
+        
+    except Exception as e:
+        console.print(f"[red]✗ LinkedIn collection failed: {e}[/red]")
+        logger.error(f"LinkedIn collection failed: {e}")
 
 if __name__ == '__main__':
     cli()

@@ -21,12 +21,14 @@ An automated Python-based system for collecting, managing, and analyzing Model R
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file for configuration (optional):
-```env
-OPENAI_API_KEY=your_openai_key_here
-LINKEDIN_USERNAME=your_linkedin_username
-LINKEDIN_PASSWORD=your_linkedin_password
-```
+3. LinkedIn credentials are already configured in the `.env` file for automated data collection
+
+**LinkedIn Integration Benefits:**
+- **Current Leadership Data**: Automatically finds up-to-date MRM professionals and their current titles
+- **Contact Information**: Extracts LinkedIn profiles, which often lead to email addresses and phone numbers
+- **Career History**: Tracks leadership movements between banks and role changes
+- **Network Analysis**: Identifies connections between MRM professionals across different institutions
+- **Real-time Updates**: LinkedIn profiles are typically more current than corporate websites or SEC filings
 
 ### Basic Usage
 
@@ -50,7 +52,12 @@ python main.py export --format xlsx
 python main.py search --name "JPMorgan" --limit 5
 ```
 
-5. **View database statistics:**
+5. **Collect LinkedIn data for a specific bank:**
+```bash
+python main.py linkedin "JPMorgan Chase & Co."
+```
+
+6. **View database statistics:**
 ```bash
 python main.py stats
 ```
@@ -65,6 +72,7 @@ python main.py stats
 - `search` - Search and filter bank information
 - `stats` - Display database statistics and distributions
 - `detail <bank_name>` - Show detailed information for a specific bank
+- `linkedin <bank_name>` - Collect MRM leadership data from LinkedIn
 - `tasks` - Show pending research tasks
 - `template` - Generate research template for manual data collection
 
@@ -95,6 +103,10 @@ python main.py search --state "NY" --size large
 
 # Show only incomplete data
 python main.py search --incomplete --limit 50
+
+# Collect LinkedIn data for specific banks
+python main.py linkedin "Bank of America"
+python main.py linkedin "Wells Fargo & Co." --limit 15
 ```
 
 ## Data Structure

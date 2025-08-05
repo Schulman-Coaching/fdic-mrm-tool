@@ -45,9 +45,15 @@ if "%1"=="" (
     echo   init      - Initialize database and import existing data
     echo   collect   - Collect FDIC bank data
     echo   export    - Export data to Excel
+    echo   linkedin  - Collect LinkedIn data for a bank
     echo   stats     - Show database statistics
     echo   test      - Run system tests
     echo   help      - Show detailed help
+    echo.
+    echo Examples:
+    echo   run_tool.bat init
+    echo   run_tool.bat linkedin "JPMorgan Chase & Co."
+    echo   run_tool.bat export
     echo.
     pause
     exit /b 0

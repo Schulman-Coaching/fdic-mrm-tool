@@ -9,6 +9,7 @@ requests>=2.31.0
 aiohttp>=3.8.0
 beautifulsoup4>=4.12.0
 selenium>=4.15.0
+webdriver-manager>=4.0.0
 scrapy>=2.11.0
 
 # NLP and AI processing
