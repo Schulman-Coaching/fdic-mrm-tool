@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 @click.group()
 @click.version_option(version="1.0.0")
@@ -324,11 +324,15 @@ def detail(bank_name):
             return
         
         # Basic information panel
+        assets_info = f"${bank.total_assets:,.0f}M" if bank.total_assets else "N/A"
+        size_info = bank.size_category.value if bank.size_category else 'N/A'
+        headquarters_info = f"{bank.headquarters_city or 'N/A'}, {bank.headquarters_state or 'N/A'}"
+        
         basic_info = f"""
 [bold]Bank Name:[/bold] {bank.bank_name}
 [bold]Asset Rank:[/bold] {bank.asset_rank or 'N/A'}
-[bold]Total Assets:[/bold] ${bank.total_assets:,.0f}M ({bank.size_category.value if bank.size_category else 'N/A'})
-[bold]Headquarters:[/bold] {bank.headquarters_city}, {bank.headquarters_state}
+[bold]Total Assets:[/bold] {assets_info} ({size_info})
+[bold]Headquarters:[/bold] {headquarters_info}
 [bold]FDIC CERT ID:[/bold] {bank.fdic_cert_id or 'N/A'}
 [bold]RSSD ID:[/bold] {bank.rssd_id or 'N/A'}
         """.strip()
@@ -404,15 +408,15 @@ def tasks():
         table.add_column("Description", style="blue")
         
         for task in tasks:
-            bank = db_manager.get_bank(task.bank_id)
-            bank_name = bank.bank_name if bank else f"Bank ID {task.bank_id}"
+            bank = db_manager.get_bank(task['bank_id'])
+            bank_name = bank.bank_name if bank else f"Bank ID {task['bank_id']}"
             
             table.add_row(
                 bank_name,
-                task.task_type,
-                str(task.priority),
-                task.created_at.strftime('%Y-%m-%d') if task.created_at else 'N/A',
-                task.description[:50] + "..." if len(task.description or "") > 50 else task.description or ""
+                task['task_type'],
+                str(task['priority']),
+                task['created_at'].strftime('%Y-%m-%d') if task['created_at'] else 'N/A',
+                task['description'][:50] + "..." if len(task['description'] or "") > 50 else task['description'] or ""
             )
         
         console.print(table)

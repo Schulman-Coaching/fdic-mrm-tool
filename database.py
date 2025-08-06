@@ -2,6 +2,7 @@
 Database management and operations for FDIC MRM Tool
 """
 import logging
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, and_, or_, desc, asc
@@ -13,6 +14,10 @@ from config import settings
 from data_models import Base, BankRecord, DataCollectionLog, ResearchTask, BankInfo, DataSource
 
 logger = logging.getLogger(__name__)
+
+def serialize_pydantic_model(model):
+    """Serialize a Pydantic model to a JSON-compatible dictionary"""
+    return json.loads(model.json())
 
 class DatabaseManager:
     """Manages database connections and operations"""
@@ -73,8 +78,8 @@ class DatabaseManager:
                 headquarters_city=bank_info.headquarters_city,
                 headquarters_state=bank_info.headquarters_state,
                 established_date=bank_info.established_date,
-                mrm_departments=[dept.dict() for dept in bank_info.mrm_departments],
-                leadership=[leader.dict() for leader in bank_info.leadership],
+                mrm_departments=[serialize_pydantic_model(dept) for dept in bank_info.mrm_departments],
+                leadership=[serialize_pydantic_model(leader) for leader in bank_info.leadership],
                 completeness_score=bank_info.completeness_score,
                 confidence_score=bank_info.confidence_score,
                 quality_status=bank_info.quality_status.value,
@@ -111,8 +116,8 @@ class DatabaseManager:
             bank_record.headquarters_city = bank_info.headquarters_city
             bank_record.headquarters_state = bank_info.headquarters_state
             bank_record.established_date = bank_info.established_date
-            bank_record.mrm_departments = [dept.dict() for dept in bank_info.mrm_departments]
-            bank_record.leadership = [leader.dict() for leader in bank_info.leadership]
+            bank_record.mrm_departments = [serialize_pydantic_model(dept) for dept in bank_info.mrm_departments]
+            bank_record.leadership = [serialize_pydantic_model(leader) for leader in bank_info.leadership]
             bank_record.completeness_score = bank_info.completeness_score
             bank_record.confidence_score = bank_info.confidence_score
             bank_record.quality_status = bank_info.quality_status.value
@@ -263,8 +268,8 @@ class DatabaseManager:
             logger.info(f"Added research task for bank ID {bank_id}: {task_type}")
             return task.id
     
-    def get_pending_research_tasks(self, limit: int = None) -> List[ResearchTask]:
-        """Get pending research tasks"""
+    def get_pending_research_tasks(self, limit: int = None) -> List[Dict[str, Any]]:
+        """Get pending research tasks with bank information"""
         with self.get_session() as session:
             query = session.query(ResearchTask).filter(
                 ResearchTask.status == 'pending'
@@ -273,7 +278,26 @@ class DatabaseManager:
             if limit:
                 query = query.limit(limit)
             
-            return query.all()
+            tasks = query.all()
+            
+            # Convert to dictionaries with all needed data loaded
+            result = []
+            for task in tasks:
+                task_dict = {
+                    'id': task.id,
+                    'bank_id': task.bank_id,
+                    'task_type': task.task_type,
+                    'description': task.description,
+                    'priority': task.priority,
+                    'status': task.status,
+                    'assigned_to': task.assigned_to,
+                    'created_at': task.created_at,
+                    'due_date': task.due_date,
+                    'completed_at': task.completed_at
+                }
+                result.append(task_dict)
+            
+            return result
     
     def get_database_stats(self) -> Dict[str, Any]:
         """Get database statistics"""

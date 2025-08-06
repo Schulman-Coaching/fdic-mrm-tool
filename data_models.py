@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from enum import Enum
 from pydantic import BaseModel, Field, validator
+import json
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -52,6 +53,11 @@ class LeadershipInfo(BaseModel):
     source: DataSource = DataSource.MANUAL_ENTRY
     last_verified: Optional[datetime] = None
     notes: Optional[str] = None
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class MRMDepartmentInfo(BaseModel):
     """MRM Department structure information"""
@@ -66,6 +72,11 @@ class MRMDepartmentInfo(BaseModel):
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
     source: DataSource = DataSource.MANUAL_ENTRY
     last_updated: Optional[datetime] = None
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class BankInfo(BaseModel):
     """Complete bank information model"""
@@ -100,6 +111,11 @@ class BankInfo(BaseModel):
     notes: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     research_priority: int = Field(default=5, ge=1, le=10)  # 1=low, 10=high
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
     
     @validator('size_category', pre=True, always=True)
     def determine_size_category(cls, v, values):
